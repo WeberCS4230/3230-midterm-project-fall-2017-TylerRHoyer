@@ -1,154 +1,263 @@
 import java.io.*;
 import java.net.Socket;
+import java.net.UnknownHostException;
 import java.util.Vector;
 
 import blackjack.game.Card;
 import blackjack.message.*;
-import blackjack.message.GameStateMessage.GameAction;
 import blackjack.message.Message.MessageType;
-import blackjack.*;
 
-public class Client {
-	private Window clientWindow;
+public class Client extends Thread {
 	
-	private Vector<Socket> sockets;
-	private Vector<ObjectOutputStream> out;
-	private Vector<Listener> listeners;
-	
-	public Client() {
-		sockets = new Vector<>();
-		out = new Vector<>();
-		listeners = new Vector<>();
-		clientWindow = new Window(this);
+	private enum GameState {
+		UNAUTHENTICATED, REQUESTED_LOGIN, ENDED, REQUESTED_START, STARTED, REQUESTED_JOIN, JOINED
 	}
 	
+	private String username = "defaultUsername";
+	private GameWindow window;
+	private Socket socket;
+	private ObjectOutputStream out;
+	private ObjectInputStream in;
+	private GameState state = GameState.UNAUTHENTICATED;
 	
-	public void send(int serverID, Message msg) {
+	private Vector<Card> cards;
+	
+	public Client() throws UnknownHostException, IOException {
+		cards = new Vector<>();
+		socket = new Socket("ec2-54-172-123-164.compute-1.amazonaws.com", 8989);
+		out = new ObjectOutputStream(socket.getOutputStream());
+		in = new ObjectInputStream(socket.getInputStream());
+		window = new GameWindow(this);
+		this.start();
+	}
+	
+	public boolean send(Message msg) {
 		try {
-			out.get(serverID).writeObject(msg);
+			out.writeObject(msg);
+			return true;
 		} catch (IOException e) {
-			System.out.println("Unable to send message");
-			e.printStackTrace();
+			window.addChat("That last message didn't go through.");
+			return false;
 		}
 	}
-
-	public void sendMessage(int serverID, String msg) {
-		send(serverID, MessageFactory.getChatMessage(msg));
+	public void sendMessage(String msg) {
+		send(MessageFactory.getChatMessage(msg));
+	}
+	public void sendHit() {
+		send(MessageFactory.getHitMessage());
+	}
+	public void sendStay() {
+		send(MessageFactory.getStayMessage());
+	}
+	public void sendBust() {
+		send(MessageFactory.getBustMessage());
+	}
+	public void sendWin() {
+		send(MessageFactory.getWinMessage(username));
+	}
+	public void sendStartRequest() {
+		if (state == GameState.ENDED) {
+			if (send(MessageFactory.getStartMessage())) {
+				state = GameState.REQUESTED_START;
+			}
+		}
+	}
+	public void sendJoinRequest() {
+		if (state == GameState.STARTED) {
+			if (send(MessageFactory.getJoinMessage())) {
+				state = GameState.REQUESTED_JOIN;
+			}
+		}
+	}
+	public void sendLogin() {
+		if (state == GameState.UNAUTHENTICATED) {
+			if (send(MessageFactory.getLoginMessage(username))) {
+				state = GameState.REQUESTED_LOGIN;
+			}
+		}
 	}
 	
-	public void sendHit(int serverID) {
-		send(serverID, MessageFactory.getHitMessage());
-	}
-	
-	public void sendStay(int serverID) {
-		send(serverID, MessageFactory.getStayMessage());
-	}
-
-	public void sendStart(int serverID) {
-		send(serverID, MessageFactory.getStartMessage());
-	}
-	
-	public void sendJoin(int serverID) {
-		send(serverID, MessageFactory.getJoinMessage());
-	}
-	
-	
-	public void recieve(int serverID, String msg) throws IOException {
-		clientWindow.display(serverID, msg);
-	}
-	
-	int connect(String name, String address) throws IOException {
-		int serverID = out.size();
-		
-		Socket newSocket = new Socket(address, 8989);
-		sockets.add(newSocket);
-		
-		out.add(serverID, new ObjectOutputStream(newSocket.getOutputStream()));
-		listeners.add(new Listener(this, serverID, new ObjectInputStream(newSocket.getInputStream())));
-		return clientWindow.addTab(serverID, address);
-	}
-	
-	public void addCard(int serverID, Message msg) {
-		CardMessage c = (CardMessage) msg;
-		clientWindow.addToHand(c.getCard());
-	}
-	
-	public void addMessage(int serverID, Message msg) {
-		ChatMessage c = (ChatMessage) msg;
-		clientWindow.display(serverID, c.getText());
-	}
-
-	public void started(int serverID) {
-		
-	}
-	
-	public void joined(int serverID) {
-		
+	void setUsername(String username) {
+		this.username = username;
+		sendLogin();
 	}
 	
 	void disconnect(int serverID) {
 		try {
-			listeners.get(serverID).disconnect();
-			sockets.get(serverID).close();
+			socket.close();
 		} catch (IOException e) {
 			System.out.println("Unable to close connection");
 			e.printStackTrace();
 		}
 	}
-	
-	private class Listener extends Thread {
-		private Client parent;
-		private ObjectInputStream in;
-		private boolean disconnected = false;
-		private int serverID;
-		
-		public Listener(Client parent, int serverID, ObjectInputStream in) {
-			this.parent = parent;
-			this.in = in;
-			this.serverID = serverID;
-			start();
-		}
-		
-		public void disconnect() {
-			disconnected = true;
-		}
 
-		@Override
-		public void run() {
-			try {
-				while (!disconnected) {
-					Message msg = (Message) in.readObject();
-					MessageType type = msg.getType();
-					if (type.equals(MessageType.CARD)) {
-						parent.addCard(serverID, msg);
-					} else if (type.equals(MessageType.CHAT)) {
-						parent.addMessage(serverID, msg);
-					} else if (type.equals(MessageType.LOGIN)) {
-						System.out.println("Recieved LOGIN");
-					} else if (type.equals(MessageType.ACK)) {
-						System.out.println("Received ACK");
-					} else if (type.equals(MessageType.GAME_STATE)) {
-						GameStateMessage s = (GameStateMessage) msg;
-						GameAction state = s.getRequestedState();
-						if (state == GameAction.START) {
-							parent.started(serverID);
-						} else if (state == GameAction.JOIN) {
-							parent.joined(serverID);
+	@Override
+	public void run() {
+		try {
+			while (!socket.isClosed()) {
+				
+				Message msg = (Message) in.readObject();
+				MessageType type = msg.getType();
+				
+				System.out.println("Recieved " + type.name() + " Message");
+				
+				switch (type) {
+					case CARD:
+						CardMessage cardMessage = (CardMessage) msg;
+						if (cardMessage.getUsername().equals(username)) {
+							cards.add(cardMessage.getCard());
+							int value = 0;
+							String hand = "";
+							for (Card card: cards) {
+								hand += card.getSuite().name() + card.getValue().name() + ", ";
+								switch(card.getValue()) {
+								case ACE: //TODO: handle ace different values
+								case KING:
+								case QUEEN:
+								case JACK:
+								case TEN:
+									value++;
+								case NINE:
+									value++;
+								case EIGHT:
+									value++;
+								case SEVEN:
+									value++;
+								case SIX:
+									value++;
+								case FIVE:
+									value++;
+								case FOUR:
+									value++;
+								case THREE:
+									value++;
+								case TWO:
+									value += 2;
+									break;
+								}
+							}
+							if (value > 21) {
+								sendBust();
+							} else if (value == 21) {
+								sendWin();
+							}
+							window.setHand(hand);
 						}
-					} else if (type.equals(MessageType.GAME_ACTION)) {
-						System.out.println("Recieved game action");
-					} else {
-						System.out.println("Recieved unknown message type: " + type.toString());
-					}
+						break;
+						
+					case LOGIN:
+						window.addChat(msg.getUsername() + " has logged in.");
+						break;
+						
+					case ACK:
+						switch (state) {
+						case UNAUTHENTICATED:
+							System.out.println("Recieved orphan ACK");
+							break;
+						case REQUESTED_LOGIN:
+							window.addChat("Username was accepted");
+							state = GameState.ENDED;
+							window.hideLogin();
+							break;
+						case ENDED:
+							System.out.println("Recieved orphan ACK");
+							break;
+						case JOINED:
+							System.out.println("Recieved orphan ACK");
+							break;
+						case REQUESTED_JOIN:
+							window.addChat("Join request was accepted");
+							state = GameState.JOINED;
+							break;
+						case REQUESTED_START:
+							window.addChat("Start request was accepted");
+							state = GameState.STARTED;
+							break;
+						case STARTED:
+							System.out.println("Recieved orphan ACK");
+							break;
+						}
+						break;
+						
+					case DENY:
+						switch (state) {
+						case UNAUTHENTICATED:
+							System.out.println("Recieved orphan DENY");
+							break;
+						case REQUESTED_LOGIN:
+							window.addChat("Username was rejected");
+							state = GameState.UNAUTHENTICATED;
+							window.showLogin();
+							break;
+						case ENDED:
+							System.out.println("Recieved orphan DENY");
+							break;
+						case JOINED:
+							System.out.println("Recieved orphan DENY");
+							break;
+						case REQUESTED_JOIN:
+							window.addChat("Join request was rejected");
+							state = GameState.STARTED;
+							break;
+						case REQUESTED_START:
+							window.addChat("Start request was rejected");
+							state = GameState.ENDED;
+							break;
+						case STARTED:
+							System.out.println("Recieved orphan DENY");
+							break;
+						}
+						break;
+						
+					case CHAT:
+						ChatMessage chatMessage = (ChatMessage) msg;
+						window.addChat(chatMessage.getUsername() + ": " + chatMessage.getText());
+						break;
+						
+					case GAME_STATE:
+						GameStateMessage gsMessage = (GameStateMessage) msg;
+						switch (gsMessage.getRequestedState()) {
+						case JOIN:
+							window.addChat("Server requests all join the game.");
+							break;
+						case START:
+							window.addChat("Server has started a game.");
+							state = GameState.STARTED;
+							break;
+						}
+						break;
+						
+					case GAME_ACTION:
+						GameActionMessage gaMessage = (GameActionMessage) msg;
+						switch (gaMessage.getAction()) {
+						case BUST:
+							window.addChat("Received BUST for: " + msg.getUsername());
+							break;
+						case HIT:
+							window.addChat("Received HIT for: " + msg.getUsername());
+							break;
+						case STAY:
+							window.addChat("Received STAY for: " + msg.getUsername());
+							break;
+						case WIN:
+							window.addChat("Received WIN for: " + msg.getUsername());
+							break;
+						}
+						break;
 				}
-			} catch (IOException e) {
-				System.out.println("IO Error occured while reading input");
-				e.printStackTrace();
-			} catch (ClassNotFoundException e) {
-				System.out.println("Unknown Error occured while reading input");
-				e.printStackTrace();
 			}
+			
+		} catch (EOFException e) {
+			System.out.println("Server has shutdown.");
+			window.addChat("Server has shutdown.");
+			
+		} catch (IOException e) {
+			System.out.println("IO Error occured while reading input");
+			e.printStackTrace();
+			
+		} catch (ClassNotFoundException e) {
+			System.out.println("Unknown Error occured while reading input");
+			e.printStackTrace();
 		}
 	}
-	
 }
