@@ -130,6 +130,8 @@ public class Client extends Thread {
 						int value = 0;
 						String hand = "";
 						for (Card card: cards) {
+							System.out.println(card.getSuite().name());
+							System.out.println(card.getValue().name());
 							hand += card.getValue().name() + ", ";
 							switch(card.getValue()) {
 							case ACE: //TODO: handle ace different values
