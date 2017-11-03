@@ -41,39 +41,61 @@ public class Client extends Thread {
 		}
 	}
 	public void sendMessage(String msg) {
-		send(MessageFactory.getChatMessage(msg));
+		if (send(MessageFactory.getChatMessage(msg))) {
+		} else {
+			window.addChat("Failed to send msg");
+		}
 	}
 	public void sendHit() {
-		send(MessageFactory.getHitMessage());
+		if (send(MessageFactory.getHitMessage())) {
+			window.addChat("Sent hit");
+		} else {
+			window.addChat("Failed to send hit");
+		}
 	}
 	public void sendStay() {
-		send(MessageFactory.getStayMessage());
+		if (send(MessageFactory.getStayMessage())) {
+			window.addChat("Sent stay");
+		} else {
+			window.addChat("Failed to send stay");
+		}
 	}
 	public void sendBust() {
-		send(MessageFactory.getBustMessage());
+		if (send(MessageFactory.getBustMessage())) {
+			window.addChat("Sent bust");
+		} else {
+			window.addChat("Failed to send bust");
+		}
 	}
 	public void sendWin() {
-		send(MessageFactory.getWinMessage(username));
+		if (send(MessageFactory.getWinMessage(username))) {
+			window.addChat("Sent win");
+		} else {
+			window.addChat("Failed to send win");
+		}
 	}
 	public void sendStartRequest() {
-		if (state == GameState.ENDED) {
-			if (send(MessageFactory.getStartMessage())) {
-				state = GameState.REQUESTED_START;
-			}
+		if (send(MessageFactory.getStartMessage())) {
+			state = GameState.REQUESTED_START;
+			window.addChat("Sent start request");
+		} else {
+			window.addChat("Failed to send start request");
 		}
 	}
 	public void sendJoinRequest() {
-		if (state == GameState.STARTED) {
-			if (send(MessageFactory.getJoinMessage())) {
-				state = GameState.REQUESTED_JOIN;
-			}
+		if (send(MessageFactory.getJoinMessage())) {
+			state = GameState.REQUESTED_JOIN;
+			window.addChat("Sent join request");
+		} else {
+			window.addChat("Failed to send join request");
 		}
 	}
 	public void sendLogin() {
-		if (state == GameState.UNAUTHENTICATED) {
-			if (send(MessageFactory.getLoginMessage(username))) {
-				state = GameState.REQUESTED_LOGIN;
-			}
+		if (send(MessageFactory.getLoginMessage(username))) {
+			state = GameState.REQUESTED_LOGIN;
+			window.addChat("Sent login request");
+		} else {
+			window.addChat("Failed to send login request");
 		}
 	}
 	
@@ -99,50 +121,48 @@ public class Client extends Thread {
 				Message msg = (Message) in.readObject();
 				MessageType type = msg.getType();
 				
-				System.out.println("Recieved " + type.name() + " Message");
+				System.out.println(state.name() + ", Recieved " + type.name() + " Message");
 				
 				switch (type) {
 					case CARD:
 						CardMessage cardMessage = (CardMessage) msg;
-						if (cardMessage.getUsername().equals(username)) {
-							cards.add(cardMessage.getCard());
-							int value = 0;
-							String hand = "";
-							for (Card card: cards) {
-								hand += card.getSuite().name() + card.getValue().name() + ", ";
-								switch(card.getValue()) {
-								case ACE: //TODO: handle ace different values
-								case KING:
-								case QUEEN:
-								case JACK:
-								case TEN:
-									value++;
-								case NINE:
-									value++;
-								case EIGHT:
-									value++;
-								case SEVEN:
-									value++;
-								case SIX:
-									value++;
-								case FIVE:
-									value++;
-								case FOUR:
-									value++;
-								case THREE:
-									value++;
-								case TWO:
-									value += 2;
-									break;
-								}
+						cards.add(cardMessage.getCard());
+						int value = 0;
+						String hand = "";
+						for (Card card: cards) {
+							hand += card.getValue().name() + ", ";
+							switch(card.getValue()) {
+							case ACE: //TODO: handle ace different values
+							case KING:
+							case QUEEN:
+							case JACK:
+							case TEN:
+								value++;
+							case NINE:
+								value++;
+							case EIGHT:
+								value++;
+							case SEVEN:
+								value++;
+							case SIX:
+								value++;
+							case FIVE:
+								value++;
+							case FOUR:
+								value++;
+							case THREE:
+								value++;
+							case TWO:
+								value += 2;
+								break;
 							}
-							if (value > 21) {
-								sendBust();
-							} else if (value == 21) {
-								sendWin();
-							}
-							window.setHand(hand);
 						}
+						if (value > 21) {
+							sendBust();
+						} else if (value == 21) {
+							sendWin();
+						}
+						window.setHand(hand);
 						break;
 						
 					case LOGIN:
@@ -232,6 +252,10 @@ public class Client extends Thread {
 						switch (gaMessage.getAction()) {
 						case BUST:
 							window.addChat("Received BUST for: " + msg.getUsername());
+							if (msg.getUsername().equals(username)) {
+								cards = new Vector<>();
+								state = GameState.STARTED;
+							}
 							break;
 						case HIT:
 							window.addChat("Received HIT for: " + msg.getUsername());
@@ -241,6 +265,8 @@ public class Client extends Thread {
 							break;
 						case WIN:
 							window.addChat("Received WIN for: " + msg.getUsername());
+							cards = new Vector<>();
+							state = GameState.ENDED;
 							break;
 						}
 						break;
